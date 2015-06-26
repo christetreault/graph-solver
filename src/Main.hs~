@@ -1,0 +1,153 @@
+module Main where
+
+import qualified Data.Map as M
+import Data.Graph
+import Data.List
+import Data.Time.Clock
+import Control.Parallel.Strategies
+import Data.Maybe
+
+type Node node = (node, Int, [Int])
+
+data Input node soln =
+   Input {solver :: node -> [soln] -> IO soln,
+          getNode :: Vertex -> Node node,
+          getVertex :: Int -> Maybe Vertex,
+          graph :: Graph}
+
+-- | Construct an Input
+input :: (node ->[soln] -> IO soln) -- ^ The solver function.
+         -> [Node node] -- ^ A node, a unique identifier for the node
+         -- and a list of node IDs upon which this node depends.
+         -> Input node soln -- ^ A new input object
+input s g =
+   Input {solver = s,
+          getNode = getter,
+          getVertex = vGetter,
+          graph = inGraph}
+   where (inGraph, getter, vGetter) = graphFromEdges g
+
+-- | Gets a node from the graph by key, and the nodes it depends on
+getVal :: Input node soln -- ^ The graph to access
+          -> Int -- ^ The key corresponding to the node
+          -> Maybe (node, [Int]) -- ^ A pair of a node, and the keys
+          -- of its dependencies, or Nothing if the node isn't in the graph
+getVal i k = do
+   vertex <- (getVertex i) k
+   (node, _, deps) <- return $ (getNode i) vertex
+   return (node, deps)
+
+type Output soln = M.Map Int soln
+
+readyNodes :: Input node soln -> Output soln -> [Node node]
+readyNodes i o = filter readyNode nkdList
+   where
+      verts = vertices (graph i)
+      nkdList = map (getNode i) verts
+      toNode = map (\(n', k', d') -> n')
+      readyNode (n', k', d') =
+         (filter (\d'' -> M.notMember d'' o) d') == []
+         && M.notMember k' o
+
+getSolutions :: Node node
+                -> Output soln
+                -> Maybe [soln]
+getSolutions (_, _, d) o = do
+   mSolns <- return $ map ((flip M.lookup) o) d
+   sequence mSolns
+
+solve :: Input node soln
+         -> ([Node node]
+             -> Output soln
+             -> (node -> [soln] -> IO soln)
+             -> IO (Output soln))
+         -> IO (Output soln)
+solve i f = solve' M.empty
+   where
+      solve' o' = do
+         nodes <- return $ readyNodes i o'
+         if (null nodes)
+            then
+            return o'
+            else
+            do
+               o'' <- f nodes o' (solver i)
+               solve' o''
+
+trySolve :: Node node
+            -> Output soln
+            -> Maybe [soln]
+            -> (node -> [soln] -> IO soln)
+            -> IO (Maybe (Int, soln))
+trySolve _ o Nothing _ = return Nothing
+trySolve (n, k, _) o (Just s) f = do
+   soln <- f n s
+   return $ Just (k, soln)
+
+addAll :: Output soln -> [(Int, soln)] -> Output soln
+addAll o [] = o
+addAll o ((k, s):xs) = addAll (M.insert k s o) xs
+
+serSolveFn :: [Node node]
+              -> Output soln
+              -> (node -> [soln] -> IO soln)
+              -> IO (Output soln)
+serSolveFn [] o _ = return o
+serSolveFn n o f = do
+   mRes <- mapM (\a -> trySolve a o (getSolutions a o) f) n
+   res <- return $ map fromJust $ filter isJust mRes
+   return $ addAll o res
+
+parSolveFn :: (NFData soln)
+              => [Node node]
+              -> Output soln
+              -> (node -> [soln] -> IO soln)
+              -> IO (Output soln)
+parSolveFn [] o _ = return o
+parSolveFn n o f = do
+   mRes <- mapM (\a -> trySolve a o (getSolutions a o) f) n
+   res <- return $ map fromJust $ filter isJust mRes
+   return $ addAll o (runEval $ rdeepseq `parList` res)
+
+
+parSolve :: Input a b -> IO (Output b)
+parSolve i = undefined
+
+main :: IO ()
+main = do
+
+   startPar <- getCurrentTime
+   putStrLn $ "Solving with parallel solver:"
+   parResult <- solve testInput parSolveFn
+   putStrLn $ "Parallel done: " ++ [(last(show $ parResult))]
+   endPar <- getCurrentTime
+
+   startSer <- getCurrentTime
+   putStrLn $ "Solving with serial solver:"
+   serResult <- solve testInput serSolveFn
+   putStrLn $ "Serial done: " ++ [(last (show $ serResult))]
+   endSer <- getCurrentTime
+
+
+
+
+   putStrLn $ show (endSer `diffUTCTime` startSer) ++ " elapsed (Serial)."
+   putStrLn $ show (endPar `diffUTCTime` startPar) ++ " elapsed (Parallel)."
+
+testInput :: Input Integer Integer
+testInput = input fn gr
+   where
+      gr = [--(0, 0, [1, 2]),
+            (1, 1, [4, 5]), --(2, 2, [5, 6]),
+            (4, 4, [7, 8]), (5, 5, [7, 8]), (6, 6, [7, 8]),
+            (7, 7, [9]), (8, 8, [9]),
+            (9, 9, [])]
+      fn node solns = return $ foldl' expensive node solns
+         where
+            expensive lhs rhs = (fact lhs lhs) + rhs
+
+fact 0 acc = acc
+fact 1 acc = acc
+fact n acc = fact (n - 1) (acc * (n - 1))
+
+-- (7,5049),(8,40329),(9,9)]
