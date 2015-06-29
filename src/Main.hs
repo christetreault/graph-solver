@@ -16,6 +16,7 @@ import Data.List
 import Data.Time.Clock
 import Control.Parallel.Strategies
 import Data.Maybe
+import Control.Monad
 
 import Criterion.Main
 
@@ -142,31 +143,41 @@ parSolveFn n o f = do
 -- | main test harness
 main :: IO ()
 main =
-   defaultMain [bench "serial" $ nfIO $ solve testInput serSolveFn,
-                bench "parallel" $ nfIO $ solve testInput parSolveFn]
+   defaultMain [bench "serial"
+                $ nfIO $ solve (testInputSC testList) serSolveFn,
+                bench "parallel"
+                $ nfIO $ solve (testInputSC testList) parSolveFn]
+   where
+      testList = [1,3,5,7,2,4,6,8,
+                  9,8,7,6,5,4,3,2,1,2,3,4,5,6,7,8,9]
 
-
-
-   {-
-   startSer <- getCurrentTime
-   putStrLn $ "Solving with serial solver:"
-   serResult <- solve testInput serSolveFn
-   putStrLn $ "Serial done: " ++ [last (show serResult)]
-   endSer <- getCurrentTime
-
-   startPar <- getCurrentTime
-   putStrLn $ "Solving with parallel solver:"
-   parResult <- solve testInput parSolveFn
-   putStrLn $ "Parallel done: " ++ [last(show parResult)]
-   endPar <- getCurrentTime
-
-   putStrLn $ show (endSer `diffUTCTime` startSer) ++ " elapsed (Serial)."
-   putStrLn $ show (endPar `diffUTCTime` startPar) ++ " elapsed (Parallel)."
--}
 
 -- | Test data
-testInput :: Input Integer Integer
-testInput = input fn gr
+
+testInputSC :: [Int] -> Input [Int] [Int]
+testInputSC i = input fn gr
+   where
+      gr = [(i, 0, [1, 2]),
+            (i, 1, [4, 5]), (i, 2, [5, 6]),
+            --(i, 3, [0, 1, 2, 3, 4, 5, 6, 7, 8, 9]),
+            (i, 4, [7, 8]), (i, 5, [7, 8]), (i, 6, [7, 8]),
+            (i, 7, [9]), (i, 8, [9]),
+            (i, 9, [])]
+      fn :: [Int] -> [[Int]] -> IO [Int]
+      fn [] [] = return i
+      fn _ [] = return i
+      fn [] _ = return i
+      fn lhs rhs = return $ do
+         l <- sLhs
+         r <- jRhs
+         [l + r]
+         where
+            sLhs = sort lhs
+            jRhs = join rhs
+
+
+testInputFact :: Input Integer Integer
+testInputFact = input fn gr
    where
       gr = [(0, 0, [1, 2]),
             (1, 1, [4, 5]), (2, 2, [5, 6]),
