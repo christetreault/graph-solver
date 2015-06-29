@@ -17,6 +17,8 @@ import Data.Time.Clock
 import Control.Parallel.Strategies
 import Data.Maybe
 
+import Criterion.Main
+
 -- | A triple of a node, its key, and the keys of its dependencies
 type Node node = (node, Int, [Int])
 
@@ -139,8 +141,13 @@ parSolveFn n o f = do
 
 -- | main test harness
 main :: IO ()
-main = do
+main =
+   defaultMain [bench "serial" $ nfIO $ solve testInput serSolveFn,
+                bench "parallel" $ nfIO $ solve testInput parSolveFn]
 
+
+
+   {-
    startSer <- getCurrentTime
    putStrLn $ "Solving with serial solver:"
    serResult <- solve testInput serSolveFn
@@ -155,6 +162,7 @@ main = do
 
    putStrLn $ show (endSer `diffUTCTime` startSer) ++ " elapsed (Serial)."
    putStrLn $ show (endPar `diffUTCTime` startPar) ++ " elapsed (Parallel)."
+-}
 
 -- | Test data
 testInput :: Input Integer Integer
