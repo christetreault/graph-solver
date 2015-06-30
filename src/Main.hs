@@ -18,7 +18,9 @@ import Control.Parallel.Strategies
 import Data.Maybe
 import Control.Monad
 
+-- Imports for testing
 import Criterion.Main
+import System.Random
 
 -- | A triple of a node, its key, and the keys of its dependencies
 type Node node = (node, Int, [Int])
@@ -143,52 +145,80 @@ parSolveFn n o f = do
 -- | main test harness
 main :: IO ()
 main =
-   defaultMain [bench "serial"
-                $ nfIO $ solve (testInputSC testList) serSolveFn,
-                bench "parallel"
-                $ nfIO $ solve (testInputSC testList) parSolveFn]
+   defaultMain [bgroup "Serial"
+                [bgroup "Good Fibs"
+                 [bench "2X2" $ nfIO $ solve (gfTestInput 2 2) serSolveFn,
+                  bench "4X4" $ nfIO $ solve (gfTestInput 4 4) serSolveFn],
+                 -- bench "8X8" $ nfIO $ solve (gfTestInput 8 8) serSolveFn],
+                 bgroup "Bad Fibs"
+                 [bench "2X2" $ nfIO $ solve (bfTestInput 2 2) serSolveFn,
+                  bench "4X4" $ nfIO $ solve (bfTestInput 4 4) serSolveFn]],
+                 -- bench "8X8" $ nfIO $ solve (bfTestInput 8 8) serSolveFn]],
+                bgroup "Parallel"
+                [bgroup "Good Fibs"
+                 [bench "2X2" $ nfIO $ solve (gfTestInput 2 2) parSolveFn,
+                  bench "4X4" $ nfIO $ solve (gfTestInput 4 4) parSolveFn],
+                 -- bench "8X8" $ nfIO $ solve (gfTestInput 8 8) parSolveFn],
+                 bgroup "Bad Fibs"
+                 [bench "2X2" $ nfIO $ solve (bfTestInput 2 2) parSolveFn,
+                  bench "4X4" $ nfIO $ solve (bfTestInput 4 4) parSolveFn]]]
+                 -- bench "8X8" $ nfIO $ solve (bfTestInput 8 8) parSolveFn]]]
    where
-      testList = [1,3,5,7,2,4,6,8,
-                  9,8,7,6,5,4,3,2,1,2,3,4,5,6,7,8,9]
+      testData w d = testGraph w d (mkStdGen 1337) nFn_fibs
+      gfTestInput w d = input sFn_goodFibs $ testData w d
+      bfTestInput w d = input sFn_badFibs $ testData w d
 
 
 -- | Test data
 
-testInputSC :: [Int] -> Input [Int] [Int]
-testInputSC i = input fn gr
+-- | Generates a test graph. This graph will have the form of a grid of w by d
+-- nodes. The top row will have no dependencies. For all other rows, each node
+-- will depend on all nodes of the row above it.
+testGraph :: (RandomGen gen)
+             => Int -- ^ The "width" of the test input. I.E., how many
+             -- nodes should be solvable in parallel. Must be > 0
+             -> Int -- ^ The depth of the test input. I.E., how many
+             -- levels of nodes there are. Must be > 0
+             -> gen -- ^ A random number generator
+             -> (Int -> Int -> [Int] -> Node node) -- ^ A function that takes a
+             -- random number, a key, and a list of dependencies, and produces a
+             -- node
+             -> [Node node]
+testGraph w d g nFn = nodeList
    where
-      gr = [(i, 0, [1, 2]),
-            (i, 1, [4, 5]), (i, 2, [5, 6]),
-            --(i, 3, [0, 1, 2, 3, 4, 5, 6, 7, 8, 9]),
-            (i, 4, [7, 8]), (i, 5, [7, 8]), (i, 6, [7, 8]),
-            (i, 7, [9]), (i, 8, [9]),
-            (i, 9, [])]
-      fn :: [Int] -> [[Int]] -> IO [Int]
-      fn [] [] = return i
-      fn _ [] = return i
-      fn [] _ = return i
-      fn lhs rhs = return $ do
-         l <- sLhs
-         r <- jRhs
-         [l + r]
-         where
-            sLhs = sort lhs
-            jRhs = join rhs
+      lhsList = take (d * w) $ randoms g :: [Int]
+      midList = [0..(w * d)]
+      rhsList = join $ replicate w [] : init (map widthList intervalList)
+      intervalList = (*) <$> [0..(d - 1)] <*> [w]
+      widthList n = replicate w [n..(n + (w - 1))]
+      nodeList = zipWith3 nFn lhsList midList rhsList
 
+nFn_fibs :: Int -> Int -> [Int] -> Node Int
+nFn_fibs _ k [] = (0, k, [])
+nFn_fibs n k d = ((abs $ n `mod` length d), k, d)
 
-testInputFact :: Input Integer Integer
-testInputFact = input fn gr
+sFn_badFibs :: Int -> [Int] -> IO Int
+sFn_badFibs n s = return $ foldl' goFibs n s
    where
-      gr = [(0, 0, [1, 2]),
-            (1, 1, [4, 5]), (2, 2, [5, 6]),
-            (4, 4, [7, 8]), (5, 5, [7, 8]), (6, 6, [7, 8]),
-            (7, 7, [9]), (8, 8, [9]),
-            (9, 9, [])]
-      fn node solns = return $ foldl' expensive node solns
-         where
-            expensive lhs rhs = (fact (lhs `mod` 100) (lhs `mod` 100)) + rhs
+      goFibs lhs rhs = badFibs (lhs + rhs)
 
--- | Factorial function. Used by testInput
-fact 0 acc = acc
-fact 1 acc = acc
-fact n acc = fact (n - 1) (acc * (n - 1))
+sFn_goodFibs :: Int -> [Int] -> IO Int
+sFn_goodFibs n s = return $ foldl' goFibs n s
+   where
+      goFibs lhs rhs = goodFibs (lhs + rhs)
+
+-- | Bad fibs implementation
+badFibs :: Int -> Int
+badFibs 0 = 0
+badFibs 1 = 1
+badFibs n = badFibs (n - 1) + badFibs (n - 2)
+
+-- | Good fibs implementation
+goodFibs :: Int -> Int
+goodFibs 0 = 0
+goodFibs 1 = 1
+goodFibs n = goodFibs' (n, 2, 1, 0)
+   where
+      goodFibs' (to, count, n, nmo)
+         | to == count = n + nmo
+         | otherwise = goodFibs' (to, (count + 1), (n + nmo), n)
