@@ -72,8 +72,8 @@ readyNodes i o = filter readyNode nkdList
       nkdList = map (getNode i) verts
       toNode = map (\(n', k', d') -> n')
       readyNode (n', k', d') =
-         (filter (\d'' -> M.notMember d'' o) d') == []
-         && M.notMember k' o
+         M.notMember k' o
+         && not (any (\ d'' -> M.notMember d'' o) d')
 
 -- | Get the solutions required to solve this node
 getSolutions :: Node node -- ^ The node in question
@@ -232,7 +232,14 @@ main = do
                   bench "Parallel" $ nfIO
                   $ solve (rTestInput 32 32) parSolveFn,
                   bench "Concurrent" $ nfIO
-                  $ solve (rTestInput 32 32) (conSolveFn threadCount)]]]
+                  $ solve (rTestInput 32 32) (conSolveFn threadCount)],
+                 bgroup "64X64"
+                 [bench "Serial" $ nfIO
+                  $ solve (rTestInput 64 64) serSolveFn,
+                  bench "Parallel" $ nfIO
+                  $ solve (rTestInput 64 64) parSolveFn,
+                  bench "Concurrent" $ nfIO
+                  $ solve (rTestInput 64 64) (conSolveFn threadCount)]]]
                 {-bgroup "Good Fibs"
                 [bgroup "2X2"
                  [bench "Serial" $ nfIO $ solve (gfTestInput 2 2) serSolveFn,
