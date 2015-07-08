@@ -163,7 +163,7 @@ conSolveFn _ [] o _ = return o
 conSolveFn nt n o f = do
    tt <- newChan
    ft <- newChan
-   taList <- return $ replicate nt $ threadAction tt ft
+   taList <- return $ replicate nt $ threadAction tt ft f
    mapM_ forkIO taList
    solveList <- return $ map toToThread n
    writeList2Chan tt solveList
@@ -180,22 +180,54 @@ conSolveFn nt n o f = do
             ThreadDeath -> running (c - 1) resList ft'
             result -> running c (result:resList) ft'
       toToThread n' = Solve n' (getSolutions n' o)
-      threadAction tt' ft' = do
-         val <- readChan tt'
-         case val of
-            Destroy -> writeChan ft' ThreadDeath
-            (Solve n' s) -> do
-               writeChan ft' $ Result $! trySolve n' s f
-               threadAction tt' ft'
 
 
+threadAction tt' ft' f = do
+   val <- readChan tt'
+   case val of
+      Destroy -> writeChan ft' ThreadDeath
+      (Solve n' s) -> do
+         writeChan ft' $ Result $! trySolve n' s f
+         threadAction tt' ft' f
 
+initWorkers :: Int
+               -> (node -> [soln] -> IO soln)
+               -> IO (Chan (ToThread node soln), Chan (FromThread soln))
+initWorkers nt f = do
+   tt <- newChan
+   ft <- newChan
+   taList <- return $ replicate nt $ threadAction tt ft f
+   mapM_ forkIO taList
+   return (tt, ft)
 
+-- | Solves a list of nodes in parallel using Control.Concurrent
+wkrSolveFn :: (Chan (ToThread node soln), Chan (FromThread soln))
+              -> [Node node] -- ^ The nodes to solve
+              -> Output soln -- ^ The current built-up solution map
+              -> (node -> [soln] -> IO soln) -- ^ The solver function
+              -> IO (Output soln) -- ^ The updated solution map
+wkrSolveFn _ [] o _ = return o
+wkrSolveFn (tt, ft) n o _ = do
+   solveList <- return $ map toToThread n
+   writeList2Chan tt solveList
+   running (length n) [] ft
+   where
+      running 0 resList _ = do
+         mRes <- mapM (\(Result r) -> r) resList
+         res <- return $ map fromJust $ filter isJust mRes
+         return $ addAll o res
+      running c resList ft' = do
+         curr <- readChan ft'
+         case curr of
+            ThreadDeath -> running c resList ft'
+            result -> running (c - 1) (result:resList) ft'
+      toToThread n' = Solve n' (getSolutions n' o)
 
 -- | main test harness
 main :: IO ()
 main = do
    threadCount <- getNumCapabilities
+   txrx <- initWorkers threadCount sFn_dmesg
    defaultMain [bgroup "dmesg"
                 [bgroup "2x4"
                  [bench "serial" $ nfIO
@@ -203,21 +235,27 @@ main = do
                   bench "parallel" $ nfIO
                   $ solve (testInput 2 4) parSolveFn,
                   bench "concurrent" $ nfIO
-                  $ solve (testInput 2 4) (conSolveFn threadCount)],
+                  $ solve (testInput 2 4) (conSolveFn threadCount),
+                  bench "workers" $ nfIO
+                  $ solve (testInput 2 4) (wkrSolveFn txrx)],
                  bgroup "8x4"
                  [bench "serial" $ nfIO
                   $ solve (testInput 8 4) serSolveFn,
                   bench "parallel" $ nfIO
                   $ solve (testInput 8 4) parSolveFn,
                   bench "concurrent" $ nfIO
-                  $ solve (testInput 8 4) (conSolveFn threadCount)],
+                  $ solve (testInput 8 4) (conSolveFn threadCount),
+                  bench "workers" $ nfIO
+                  $ solve (testInput 8 4) (wkrSolveFn txrx)],
                  bgroup "16x4"
                  [bench "serial" $ nfIO
                   $ solve (testInput 16 4) serSolveFn,
                   bench "parallel" $ nfIO
                   $ solve (testInput 16 4) parSolveFn,
                   bench "concurrent" $ nfIO
-                  $ solve (testInput 16 4) (conSolveFn threadCount)]
+                  $ solve (testInput 16 4) (conSolveFn threadCount),
+                  bench "workers" $ nfIO
+                  $ solve (testInput 16 4) (wkrSolveFn txrx)]
 
                  ]]
                {-[bgroup "Randoms"
