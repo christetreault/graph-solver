@@ -25,6 +25,7 @@ import Control.Parallel.Strategies
 -- Imports for testing
 import Criterion.Main
 import System.Random
+import System.Process
 
 -- | A triple of a node, its key, and the keys of its dependencies
 type Node node = (node, Int, [Int])
@@ -54,8 +55,8 @@ getVal :: Input node soln -- ^ The graph to access
           -> Maybe (node, [Int]) -- ^ A pair of a node, and the keys
           -- of its dependencies, or Nothing if the node isn't in the graph
 getVal i k = do
-   vertex <- (getVertex i) k
-   (node, _, deps) <- return $ (getNode i) vertex
+   vertex <- getVertex i k
+   (node, _, deps) <- return $ getNode i vertex
    return (node, deps)
 
 -- | The final output of the solver. A map from keys to solutions
@@ -70,10 +71,9 @@ readyNodes i o = filter readyNode nkdList
    where
       verts = vertices (graph i)
       nkdList = map (getNode i) verts
-      toNode = map (\(n', k', d') -> n')
-      readyNode (n', k', d') =
+      readyNode (_, k', d') =
          M.notMember k' o
-         && not (any (\ d'' -> M.notMember d'' o) d')
+         && not (any (`M.notMember` o) d')
 
 -- | Get the solutions required to solve this node
 getSolutions :: Node node -- ^ The node in question
@@ -81,7 +81,7 @@ getSolutions :: Node node -- ^ The node in question
                 -> Maybe [soln] -- ^ A list of solutions, or Nothing if
                 -- there is an unsolved dependency
 getSolutions (_, _, d) o = do
-   mSolns <- return $ map ((flip M.lookup) o) d
+   mSolns <- return $ map (`M.lookup` o) d
    sequence mSolns
 
 -- | Solve the input and produce an output map. Solves batches of ready
@@ -96,7 +96,7 @@ solve i f = solve' M.empty
    where
       solve' o' = do
          nodes <- return $ readyNodes i o'
-         if (null nodes)
+         if null nodes
             then
             return o'
             else
@@ -144,7 +144,6 @@ parSolveFn n o f = do
    mRes <- mapM mapTrySolve n
    res <- return $ map fromJust $ filter isJust mRes
    return $ addAll o res
-   --return $ addAll o (runEval $ rdeepseq `parList` res)
    where
       mapTrySolve a = runEval $ rseq $ trySolve a (getSolutions a o) f
 
@@ -197,7 +196,31 @@ conSolveFn nt n o f = do
 main :: IO ()
 main = do
    threadCount <- getNumCapabilities
-   defaultMain [bgroup "Randoms"
+   defaultMain [bgroup "dmesg"
+                [bgroup "2x4"
+                 [bench "serial" $ nfIO
+                  $ solve (testInput 2 4) serSolveFn,
+                  bench "parallel" $ nfIO
+                  $ solve (testInput 2 4) parSolveFn,
+                  bench "concurrent" $ nfIO
+                  $ solve (testInput 2 4) (conSolveFn threadCount)],
+                 bgroup "8x4"
+                 [bench "serial" $ nfIO
+                  $ solve (testInput 8 4) serSolveFn,
+                  bench "parallel" $ nfIO
+                  $ solve (testInput 8 4) parSolveFn,
+                  bench "concurrent" $ nfIO
+                  $ solve (testInput 8 4) (conSolveFn threadCount)],
+                 bgroup "16x4"
+                 [bench "serial" $ nfIO
+                  $ solve (testInput 16 4) serSolveFn,
+                  bench "parallel" $ nfIO
+                  $ solve (testInput 16 4) parSolveFn,
+                  bench "concurrent" $ nfIO
+                  $ solve (testInput 16 4) (conSolveFn threadCount)]
+
+                 ]]
+               {-[bgroup "Randoms"
                 [bgroup "2X2"
                  [bench "Serial" $ nfIO
                   $ solve (rTestInput 2 2) serSolveFn,
@@ -239,39 +262,26 @@ main = do
                   bench "Parallel" $ nfIO
                   $ solve (rTestInput 64 64) parSolveFn,
                   bench "Concurrent" $ nfIO
-                  $ solve (rTestInput 64 64) (conSolveFn threadCount)]]]
-                {-bgroup "Good Fibs"
-                [bgroup "2X2"
-                 [bench "Serial" $ nfIO $ solve (gfTestInput 2 2) serSolveFn,
-                  bench "Parallel" $ nfIO $ solve (gfTestInput 2 2) parSolveFn,
-                  bench "Concurrent"
-                  $ nfIO $ solve (gfTestInput 2 2) (conSolveFn threadCount)],
-                 bgroup "4x4"
-                 [bench "Serial" $ nfIO $ solve (gfTestInput 4 4) serSolveFn,
-                  bench "Parallel" $ nfIO $ solve (gfTestInput 4 4) parSolveFn,
-                  bench "Concurrent"
-                  $ nfIO $ solve (gfTestInput 4 4) (conSolveFn threadCount)]],-}
-                {-bgroup "Bad Fibs"
-                [bgroup "2X2"
-                 [bench "Serial" $ nfIO $ solve (bfTestInput 2 2) serSolveFn,
-                  bench "Parallel" $ nfIO $ solve (bfTestInput 2 2) parSolveFn,
-                  bench "Concurrent"
-                  $ nfIO $ solve (bfTestInput 2 2) (conSolveFn threadCount)],
-                 bgroup "4X4"
-                 [bench "Serial" $ nfIO $ solve (bfTestInput 4 4) serSolveFn,
-                  bench "Parallel" $ nfIO $ solve (bfTestInput 4 4) parSolveFn,
-                  bench "Concurrent"
-                  $ nfIO $ solve (bfTestInput 4 4) (conSolveFn threadCount)],
-                 bgroup "8X8"
-                 [bench "Serial" $ nfIO $ solve (bfTestInput 8 8) serSolveFn,
-                  bench "Parallel" $ nfIO $ solve (bfTestInput 8 8) parSolveFn,
-                  bench "Concurrent"
-                  $ nfIO $ solve (bfTestInput 8 8) (conSolveFn threadCount)]]]-}
+                  $ solve (rTestInput 64 64) (conSolveFn threadCount)],
+                 bgroup "128X128"
+                 [bench "Serial" $ nfIO
+                  $ solve (rTestInput 128 128) serSolveFn,
+                  bench "Parallel" $ nfIO
+                  $ solve (rTestInput 128 128) parSolveFn,
+                  bench "Concurrent" $ nfIO
+                  $ solve (rTestInput 128 128) (conSolveFn threadCount)],
+                 bgroup "256X256"
+                 [bench "Serial" $ nfIO
+                  $ solve (rTestInput 256 256) serSolveFn,
+                  bench "Parallel" $ nfIO
+                  $ solve (rTestInput 256 256) parSolveFn,
+                  bench "Concurrent" $ nfIO
+                  $ solve (rTestInput 256 256) (conSolveFn threadCount)]]]-}
    where
-      testData w d = testGraph w d (mkStdGen 1337) nFn_randoms --fibs
-      rTestInput w d = input sFn_randoms $ testData w d
-      gfTestInput w d = input sFn_goodFibs $ testData w d
-      bfTestInput w d = input sFn_badFibs $ testData w d
+      testData w d = testGraph w d (mkStdGen 800815) nFn_dmesg
+      testInput w d = input sFn_dmesg $ testData w d
+      --testData w d = testGraph w d (mkStdGen 1337) nFn_randoms --fibs
+      --rTestInput w d = input sFn_randoms $ testData w d
 
 
 -- | Test data
@@ -298,6 +308,24 @@ testGraph w d g nFn = nodeList
       widthList n = replicate w [n..(n + (w - 1))]
       nodeList = zipWith3 nFn lhsList midList rhsList
 
+nFn_dmesg :: Int -> Int -> [Int] -> Node Int
+nFn_dmesg = nFn_fibs
+
+sFn_dmesg :: Int -> [Int] -> IO Int
+sFn_dmesg = sFn_ioStuff $ do
+   out <- readProcess "dmesg" [] []
+   return $ length out
+
+sFn_ioStuff :: IO Int -> Int -> [Int] -> IO Int
+sFn_ioStuff a = foldM goDoStuff
+   where
+      goDoStuff 0 0 = goDoStuff 1 1
+      goDoStuff lhs 0 = goDoStuff lhs 1
+      goDoStuff 0 rhs = goDoStuff 1 rhs
+      goDoStuff lhs rhs = do
+         ioRes <- a
+         return $ (ioRes `mod` lhs) + (ioRes `mod` rhs)
+
 nFn_fibs :: Int -> Int -> [Int] -> Node Int
 nFn_fibs _ k [] = (0, k, [])
 nFn_fibs n k d = ((abs $ n `mod` length d), k, d)
@@ -313,8 +341,10 @@ sFn_randoms = foldM goRand
       goRand 0 rhs = goRand 1 rhs
       goRand lhs rhs = do
          lhs' <- randomIO
+         lhs'' <- randomIO
          rhs' <- randomIO
-         return $ (lhs' `mod` lhs) + (rhs' `mod` rhs)
+         rhs'' <- randomIO
+         return $ (lhs' + lhs'' `mod` lhs) + (rhs' + rhs'' `mod` rhs)
 
 sFn_badFibs :: Int -> [Int] -> IO Int
 sFn_badFibs n s = return $ foldl' goFibs n s
